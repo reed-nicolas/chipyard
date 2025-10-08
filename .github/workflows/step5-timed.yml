@@ -1,0 +1,67 @@
+name: Step 5 Baseline Timed
+
+on:
+  workflow_dispatch:
+
+jobs:
+  step5-timed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 11 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Cache Ivy/Coursier/SBT
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ivy2
+            ~/.cache/coursier
+            ~/.sbt
+          key: ${{ runner.os }}-ivy2-coursier-sbt-${{ hashFiles('**/build.sbt', '**/project/**') }}
+
+      - name: Run Step 5 timed baseline only
+        shell: bash
+        run: |
+          set -euo pipefail
+          source env.sh
+          ./scripts/build-setup.sh --timed-step5 -s 1 -s 2 -s 3 -s 4 -s 6 -s 7 -s 8 -s 9 -s 10 -s 11
+
+      - name: Show timing table (for quick viewing in logs)
+        shell: bash
+        run: |
+          grep -a -o 'timing: step=5 [^[:cntrl:]]*' build-setup.log \
+          | awk 'BEGIN{
+              printf "%-9s %-8s %-6s %-10s %-10s %-10s %-7s %-16s\n",
+                     "mode","target","stat","real_s","user_s","sys_s","cpu%","norm_serial_s"
+            }{
+              for(i=1;i<=NF;i++){
+                split($i,a,"=");
+                if(a[1]=="mode") m=a[2];
+                if(a[1]=="target") t=a[2];
+                if(a[1]=="status") st=a[2];
+                if(a[1]=="real_seconds") r=a[2];
+                if(a[1]=="user_cpu_seconds") u=a[2];
+                if(a[1]=="sys_cpu_seconds")  s=a[2];
+                if(a[1]=="cpu_pct") p=a[2];
+              }
+              ru=(u+0); ss=(s+0); rr=(r+0);
+              cf=(rr>0)?(ru+ss)/rr:0; est=int(cf+0.5); if(est<1) est=1;
+              norm=(ru+ss)/est;
+              printf "%-9s %-8s %-6s %-10s %-10s %-10s %-7s %-16.2f\n", m,t,st,r,u,s,p,norm;
+            }'
+
+      - name: Upload build-setup.log
+        uses: actions/upload-artifact@v4
+        with:
+          name: step5-timed-logs
+          path: build-setup.log
