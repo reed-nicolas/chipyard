@@ -1,4 +1,4 @@
-name: Step 5 Baseline Timed
+name: Timed Build Setup Step 5
 
 on:
   workflow_dispatch:
