@@ -53,6 +53,9 @@ usage() {
     echo "  --skip-circt            : Skip CIRCT install (step 10)"
     echo "  --skip-clean            : Skip repository clean-up (step 11)"
 
+    echo "  --timed-step5           : Use profiling Step 5 (baseline, serial, parallel with timing)"
+
+
     exit "$1"
 }
 
@@ -65,6 +68,7 @@ SKIP_LIST=()
 BUILD_CIRCT=false
 GLOBAL_ENV_NAME=""
 GITHUB_TOKEN="null"
+USE_TIMED_STEP5=0 # default to original Step 5
 
 # getopts does not support long options, and is inflexible
 while [ "$1" != "" ];
@@ -111,6 +115,8 @@ do
             SKIP_LIST+=(10) ;;
         --skip-clean)
             SKIP_LIST+=(11) ;;
+        --timed-step5)
+            USE_TIMED_STEP5=1 ;;
         * )
             error "invalid option $1"
             usage 1 ;;
@@ -261,12 +267,20 @@ fi
 
 # precompile chipyard scala sources
 if run_step "5"; then
-    begin_step "5" "Pre-compiling Chipyard Scala sources"
-    pushd $CYDIR/sims/verilator &&
-    make launch-sbt SBT_COMMAND=";project chipyard; compile" &&
-    make launch-sbt SBT_COMMAND=";project tapeout; compile" &&
-    popd
-    exit_if_last_command_failed
+    if [ "${USE_TIMED_STEP5:-0}" = "1" ]; then
+        begin_step "5" "Pre-compiling Chipyard Scala sources (timed baseline)"
+        # shellcheck source=/dev/null
+        source "$CYDIR/scripts/step5_timed.sh"
+        chipyard_step5_timed_baseline
+        exit_if_last_command_failed
+    else
+        begin_step "5" "Pre-compiling Chipyard Scala sources"
+        pushd "$CYDIR/sims/verilator" &&
+        make launch-sbt SBT_COMMAND=";project chipyard; compile" &&
+        make launch-sbt SBT_COMMAND=";project tapeout; compile" &&
+        popd
+        exit_if_last_command_failed
+    fi
 fi
 
 # setup firesim
