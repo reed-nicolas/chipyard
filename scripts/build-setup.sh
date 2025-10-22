@@ -137,26 +137,51 @@ STEP_IDS=()
 STEP_DESCS=()
 STEP_WALL=()
 __STEP_START=0
+TIMING_TSV="${TIMING_TSV:-/tmp/cy_timings.$$.tsv}"
+rm -f "$TIMING_TSV"
 
-function begin_step
-{
-    thisStepNum=$1;
-    thisStepDesc=$2;
+begin_step() {
+    thisStepNum=$1
+    thisStepDesc=$2
     echo " ========== BEGINNING STEP $thisStepNum: $thisStepDesc =========="
     __STEP_START=$(date +%s)
 }
-function exit_if_last_command_failed
-{
-    local exitcode=$?;
+exit_if_last_command_failed() {
+    local exitcode=$?
     if [ $exitcode -ne 0 ]; then
-        die "Build script failed with exit code $exitcode at step $thisStepNum: $thisStepDesc" $exitcode;
+        die "Build script failed with exit code $exitcode at step $thisStepNum: $thisStepDesc" $exitcode
     fi
 }
 record_step_time() {
     local __end=$(date +%s)
     STEP_IDS+=("$thisStepNum")
     STEP_DESCS+=("$thisStepDesc")
-    STEP_WALL+=("$((__end-__STEP_START))")
+    local __sec=$((__end-__STEP_START))
+    STEP_WALL+=("$__sec")
+    printf "%s\t%s\t%s\n" "$thisStepNum" "$__sec" "$thisStepDesc" >> "$TIMING_TSV"
+}
+print_timing_report() {
+    local tsv="${TIMING_TSV:-/tmp/cy_timings.$$.tsv}"
+    [ -s "$tsv" ] || { echo "No timing data."; return; }
+    awk -v cols="$(tput cols 2>/dev/null || echo 120)" '
+      BEGIN{ FS="\t"; max=0; total=0 }
+      { id[NR]=$1; sec[NR]=$2+0; desc[NR]=$3; total+=sec[NR]; if(sec[NR]>max) max=sec[NR] }
+      END{
+        barw = (cols>90)? 40: 24
+        dash=""; for(i=0;i<barw;i++) dash=dash"-"
+        print "Per-step timing"
+        printf "%-3s  %8s  %7s  %9s  %-*s  %s\n", "ID","Wall_s","%Total","Cumul_s", barw, "Bar","Description"
+        printf "%-3s  %8s  %7s  %9s  %-*s  %s\n", "---","-------","-------","---------", barw, dash,"-----------"
+        cum=0
+        for(i=1;i<=NR;i++){
+          pct=(total>0)?(sec[i]*100.0/total):0
+          cum+=sec[i]
+          bl=(max>0)?int(barw*sec[i]/max):0
+          bar=""; for(j=0;j<bl;j++) bar=bar"█"
+          printf "%-3d  %8d  %6.1f%%  %9d  %-*s  %s\n", id[i], sec[i], pct, cum, barw, bar, desc[i]
+        }
+        printf "%-3s  %8d  %6s   %9d\n", "Tot", total, "100%", cum
+      }' "$tsv"
 }
 
 # add helper variable pointing to current chipyard top-level dir
@@ -375,16 +400,9 @@ fi
 
 echo "Setup complete!"
 
-if [ "${#STEP_IDS[@]}" -gt 0 ]; then
+if [ -s "$TIMING_TSV" ]; then
     echo ""
-    printf "Per-step timing (wall seconds)\n"
-    printf "%-6s  %-8s  %s\n" "Step" "Seconds" "Description"
-    total=0
-    for i in "${!STEP_IDS[@]}"; do
-        printf "%-6s  %-8s  %s\n" "${STEP_IDS[$i]}" "${STEP_WALL[$i]}" "${STEP_DESCS[$i]}"
-        total=$((total + ${STEP_WALL[$i]}))
-    done
-    printf "%-6s  %-8s  %s\n" "Total" "$total" ""
+    print_timing_report
 fi
 
 } 2>&1 | tee build-setup.log
