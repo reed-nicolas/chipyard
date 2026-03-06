@@ -52,6 +52,9 @@ usage() {
     echo "  --skip-marshal          : Skip firemarshal initialization (steps 8/9)"
     echo "  --skip-circt            : Skip CIRCT install (step 10)"
     echo "  --skip-clean            : Skip repository clean-up (step 11)"
+    echo ""
+    echo "Data collection (.chipyard/config.json)"
+    echo "  --datacoll=on|off|default : set override for this invocation (optional)"
 
     exit "$1"
 }
@@ -65,6 +68,7 @@ SKIP_LIST=()
 BUILD_CIRCT=false
 GLOBAL_ENV_NAME=""
 GITHUB_TOKEN="null"
+DATACOLL_VALUE=""
 
 # getopts does not support long options, and is inflexible
 while [ "$1" != "" ];
@@ -111,6 +115,8 @@ do
             SKIP_LIST+=(10) ;;
         --skip-clean)
             SKIP_LIST+=(11) ;;
+        --datacoll=*)
+            DATACOLL_VALUE="${1#*=}" ;;
         * )
             error "invalid option $1"
             usage 1 ;;
@@ -123,6 +129,12 @@ run_step() {
     local value=$1
     [[ ! " ${SKIP_LIST[*]} " =~ " ${value} " ]]
 }
+
+# Setup .chipyard/config.json. Run without piping so interactive prompt works.
+if [ -n "$DATACOLL_VALUE" ]; then
+    export DATACOLL="$DATACOLL_VALUE"
+fi
+python3 "$CYDIR/scripts/datacoll-setup.py" --chipyard-dir "$CYDIR" 2>&1 | tee build-setup.log
 
 {
 
@@ -353,4 +365,4 @@ fi
 
 echo "Setup complete!"
 
-} 2>&1 | tee build-setup.log
+} 2>&1 | tee -a build-setup.log
