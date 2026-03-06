@@ -11,7 +11,7 @@ Store this file at the root of the Chipyard repo (`$CHIPYARD_ROOT/.chipyard/conf
 Example fields:
 
 - `enable_data_collection`: `"on"` or `"off"`  
-  The user’s persistent opt out. Default is `"on"`.
+  The user’s persistent opt-in/opt-out. When created via `datacoll-setup.py`, the default is group-based: `"on"` if `git user.email` ends with `berkeley.edu` or the machine IP is in Berkeley ranges; otherwise `"off"`.
 
 - `db_path`: string  
   Filesystem path to the SQLite database file (for example `"/scratch/chipyard-data/chipyard.db"`).
@@ -29,15 +29,7 @@ These can be overridden at runtime. For example, running `make ... DATACOLL=on` 
 
 ## Integration Points (Makefile Hooks)
 
-In each simulator’s Makefile (Verilator and VCS directories), add a post run hook. For example, in the Verilator Makefrag, after the simulation command finishes, append something like:
-
-```makefile
-ifeq ($(DATACOLL),on)
-	@python3 $(CHIPYARD_ROOT)/util/log_data.py --config $(CONFIG) --bench $(BENCHMARK) --datacoll $(DATACOLL) --...
-endif
-```
-
-Thus, an example `make` command that a user can run in the terminal is:
+A shared fragment `sims/data-collection.mk` is included from `common.mk`. It defines a `log_data_post_run` macro that invokes `util/log_data.py` after each run. The hook is appended to `%.run`, `%.run.fast`, and `$(output_dir)/%.run` rules in `common.mk`. Make always calls the script; the script reads `DATACOLL` and config to decide whether to collect. Both Verilator and VCS inherit these rules. Thus, an example `make` command that a user can run in the terminal is:
 ```shell
 # Example: run a binary under Verilator and collect data for this run only
 make CONFIG=RocketConfig BINARY=../../tests/hello.riscv DATACOLL=on run-binary
@@ -45,11 +37,11 @@ make CONFIG=RocketConfig BINARY=../../tests/hello.riscv DATACOLL=on run-binary
 
 Users can also do `DATACOLL=off` or just leave `DATACOLL` unset so that the script must fall back to the persistent default in `.chipyard/config.json`.
 
-Here, `log_data.py` is the Python tool that reads environment variables (`$CONFIG`, `$BENCHMARK`, etc.), the Git state, the output log file, and records everything.
+Here, `log_data.py` is the Python tool that receives config name, benchmark, log path, and simulator from the Makefile (as CLI args), gathers Git state, copies and parses the log file, and records everything.
 
 Do not modify `env.sh`.
 
-A small snippet may be added to `scripts/build-setup.sh` to auto create a default `.chipyard/config.json` (if missing) with `enable_data_collection=on`.
+The script `scripts/datacoll-setup.py` creates or updates `.chipyard/config.json`. It is invoked by `scripts/build-setup.sh` during setup. When run interactively (TTY), it prompts the user: Yes (enable), No (disable), or Enter (use group-based default). In non-interactive mode or when stdin is not a TTY, it uses the group-based default without prompting. Build-setup supports `--datacoll=on`, `--datacoll=off`, or `--datacoll=default` to set `DATACOLL` for that invocation; the script reads `DATACOLL` and skips the prompt when it is set.
 
 ## Database Schema
 
@@ -119,8 +111,17 @@ Columns:
 - `log_path` (TEXT)  
   Filepath to the copied simulation log in `artifact_dir`
 
+- `run_dir` (TEXT)  
+  Absolute path to the simulator directory (e.g. `/path/to/chipyard/sims/verilator`)
+
+- `simulator` (TEXT)  
+  Simulator name (e.g. `"verilator"`, `"vcs"`)
+
+- `github_user` (TEXT)  
+  GitHub user or org extracted from `remote.origin.url` (e.g. `"ucb-bar"`, `"reed-nicolas"`)
+
 - `user`, `host` (TEXT)  
-  Who ran it
+  Who ran it (Unix user, hostname)
 
 - `timestamp` (DATETIME)  
   When the run was executed
@@ -192,7 +193,7 @@ Logging is opt-out per user (default on).
 
 ### Persistent setting
 
-The user edits `.chipyard/config.json` to set `enable_data_collection` to `"off"` to disable logging by default. The default is `"on"`.
+The user edits `.chipyard/config.json` to set `enable_data_collection` to `"off"` to disable logging by default. When created via `datacoll-setup.py`, the default is group-based: `"on"` if `git user.email` ends with `berkeley.edu` or the machine IP is in Berkeley ranges; otherwise `"off"`. (Future: default may use additional signals.)
 
 ### Per run override
 
@@ -232,6 +233,7 @@ Records each run.
   All other counters and user metrics (cache misses, TMA categories, etc.)
 - `log_path` (TEXT)  
   Path to the copied run log file
+- `run_dir` (TEXT), `simulator` (TEXT), `github_user` (TEXT)
 - `user`, `host`, `timestamp` (as above)
 
 This schema assumes SQLite, but uses common types so it could be ported to Postgres later. For example, `metrics` can be TEXT in SQLite and JSONB in Postgres.
@@ -252,4 +254,4 @@ When switching, ensure table and column names are valid in Postgres. Run a migra
 
 ### Other TBDs
 
-Handling multi host sync (for example periodic push from hosts to central DB), GAIA based defaults, and NDA flagging can be added later. In this spec, such items are marked TBD or optional placeholders and do not block the v0 workflow.
+Handling multi host sync (for example periodic push from hosts to central DB) and NDA flagging can be added later. In this spec, such items are marked TBD or optional placeholders and do not block the v0 workflow.
