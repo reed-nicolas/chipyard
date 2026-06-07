@@ -21,7 +21,15 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
 from datacoll.config import resolve_config
-from datacoll.db import apply_schema, get_or_create_build_id, init_db, insert_run
+from datacoll.db import (
+    apply_schema,
+    apply_vec_schema,
+    get_or_create_build_id,
+    init_db,
+    insert_run,
+    insert_run_embedding,
+)
+from datacoll.embeddings import build_run_chunk, embed_text
 
 
 def _warn(msg: str) -> None:
@@ -118,6 +126,52 @@ def parse_github_user(remote_url: str | None) -> str:
     return m.group(1) if m else ""
 
 
+def _index_run_for_rag(
+    conn,
+    *,
+    run_id: int,
+    cfg: dict,
+    chipyard_config: str,
+    bench: str,
+    git: dict,
+    simulator: str | None,
+    run_target: str | None,
+    cycles: int | None,
+    instructions: int | None,
+    ipc: float | None,
+    metrics_json: str,
+    log_path: Path,
+) -> None:
+    """Build text chunk, embed, and insert into vec_runs. No-op on any failure."""
+    try:
+        if not apply_vec_schema(conn):
+            return  # sqlite-vec not available
+        log_snippet = None
+        if log_path.exists():
+            try:
+                log_snippet = log_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+        content = build_run_chunk(
+            config=chipyard_config,
+            benchmark=bench,
+            commit_hash=git.get("commit_hash", "") or "unknown",
+            simulator=simulator,
+            run_target=run_target,
+            cycles=cycles,
+            instructions=instructions,
+            ipc=ipc,
+            metrics_json=metrics_json,
+            log_snippet=log_snippet,
+        )
+        model = str(cfg.get("embedding_model", "all-MiniLM-L6-v2"))
+        embedding = embed_text(content, model_name=model)
+        if embedding:
+            insert_run_embedding(conn, run_id=run_id, content=content, embedding=embedding)
+    except Exception:
+        pass  # Never fail the run on RAG indexing errors
+
+
 def run_init_db(config_path: str | None, chipyard_root: Path) -> None:
     """mkdir artifact_dir/{builds,logs}, create DB, apply schema."""
     try:
@@ -132,6 +186,8 @@ def run_init_db(config_path: str | None, chipyard_root: Path) -> None:
 
         conn = init_db(db_path)
         apply_schema(conn)
+        if str(cfg.get("enable_vector_index", "off")).lower() == "on":
+            apply_vec_schema(conn)
         conn.close()
     except Exception as e:
         _exit_warn(str(e))
@@ -144,7 +200,8 @@ def run_log(
     log_path: str,
     sim_dir: str | None,
     simulator: str | None,
-    exit_code: int,
+    run_target: str | None = None,
+    exit_code: int = 0,
 ) -> None:
     """Copy log, insert run row. No-op if should_collect is False."""
     chipyard_root = _get_chipyard_root(sim_dir)
@@ -227,7 +284,7 @@ def run_log(
     github_user = parse_github_user(git["remote_url"])
 
     try:
-        insert_run(
+        run_id =         insert_run(
             conn,
             build_id=build_id,
             commit_hash=git["commit_hash"] or "unknown",
@@ -245,9 +302,27 @@ def run_log(
             run_dir=run_dir_stored,
             simulator=simulator,
             github_user=github_user,
+            run_target=run_target,
             user=os.environ.get("USER"),
             host=os.environ.get("HOSTNAME") or os.environ.get("HOST", ""),
         )
+        # Optional: index for RAG/vector search when enabled
+        if str(cfg.get("enable_vector_index", "off")).lower() == "on":
+            _index_run_for_rag(
+                conn,
+                run_id=run_id,
+                cfg=cfg,
+                chipyard_config=chipyard_config,
+                bench=bench,
+                git=git,
+                simulator=simulator,
+                run_target=run_target,
+                cycles=cycles,
+                instructions=instructions,
+                ipc=ipc,
+                metrics_json=metrics_json,
+                log_path=src,
+            )
     except Exception as e:
         _exit_warn(str(e))
     finally:
@@ -265,6 +340,7 @@ def main() -> None:
     ap.add_argument("--log-path", metavar="PATH", default="", help="Path to simulation log file")
     ap.add_argument("--sim-dir", metavar="PATH", default=None, help="Simulator directory (for repo context)")
     ap.add_argument("--simulator", metavar="NAME", default="", help="Simulator name (e.g. verilator, vcs)")
+    ap.add_argument("--run-target", metavar="TARGET", default="", help="Make target (e.g. run-binary, run-asm-tests)")
     ap.add_argument("--exit-code", type=int, default=0, help="Simulation exit code (for future use)")
     args = ap.parse_args()
 
@@ -285,6 +361,7 @@ def main() -> None:
         log_path=args.log_path,
         sim_dir=args.sim_dir,
         simulator=args.simulator or None,
+        run_target=args.run_target or None,
         exit_code=args.exit_code,
     )
 

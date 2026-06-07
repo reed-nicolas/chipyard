@@ -1,4 +1,5 @@
-"""DB init, schema creation, insert_build, insert_run, get_or_create_build_id."""
+"""DB init, schema creation, insert_build, insert_run, get_or_create_build_id.
+Vector/RAG support via sqlite-vec when enable_vector_index is on."""
 
 from __future__ import annotations
 
@@ -7,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
+_SCHEMA_VEC_PATH = Path(__file__).resolve().parent / "schema_vec.sql"
+VEC_EMBEDDING_DIM = 384  # Must match schema_vec.sql and embedding model
 
 
 def init_db(db_path: str | Path) -> sqlite3.Connection:
@@ -14,6 +17,52 @@ def init_db(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     return sqlite3.connect(str(path))
+
+
+def connection_with_vec(db_path: str | Path) -> sqlite3.Connection:
+    """
+    Return a DB connection with sqlite-vec extension loaded.
+    Use for Ray Data read_sql connection_factory when querying vec_runs:
+        ray.data.read_sql("SELECT * FROM vec_runs WHERE ...", lambda: connection_with_vec(db_path))
+    """
+    conn = init_db(db_path)
+    load_vec_extension(conn)
+    return conn
+
+
+def load_vec_extension(conn: sqlite3.Connection) -> bool:
+    """Load sqlite-vec extension. Returns True on success, False if not installed."""
+    try:
+        conn.execute("SELECT vec_version()").fetchone()
+        return True  # Already loaded
+    except (sqlite3.OperationalError, Exception):
+        pass
+    try:
+        conn.enable_load_extension(True)
+        import sqlite_vec
+
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        return True
+    except (ImportError, Exception):
+        try:
+            conn.enable_load_extension(False)
+        except Exception:
+            pass
+        return False
+
+
+def apply_vec_schema(conn: sqlite3.Connection) -> bool:
+    """Apply vec0 schema. Requires sqlite-vec loaded. Returns True on success."""
+    if not load_vec_extension(conn):
+        return False
+    try:
+        sql = _SCHEMA_VEC_PATH.read_text(encoding="utf-8")
+        conn.executescript(sql)
+        conn.commit()
+        return True
+    except Exception:
+        return False
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
@@ -26,7 +75,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
 
 def _migrate_add_columns(conn: sqlite3.Connection) -> None:
     """Add new columns to existing runs table if missing."""
-    for col, ctype in [("run_dir", "TEXT"), ("simulator", "TEXT"), ("github_user", "TEXT")]:
+    for col, ctype in [("run_dir", "TEXT"), ("simulator", "TEXT"), ("github_user", "TEXT"), ("run_target", "TEXT")]:
         try:
             conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {ctype}")
             conn.commit()
@@ -91,15 +140,16 @@ def insert_run(
     run_dir: str | None = None,
     simulator: str | None = None,
     github_user: str | None = None,
+    run_target: str | None = None,
     user: str | None,
     host: str | None,
-) -> None:
-    """Insert a row into runs."""
-    conn.execute(
+) -> int:
+    """Insert a row into runs. Returns the run id (lastrowid)."""
+    cur = conn.execute(
         """INSERT INTO runs (
             build_id, commit_hash, branch, remote_url, is_dirty, config,
-            benchmark, cycles, instructions, ipc, cpi, metrics, log_path, run_dir, simulator, github_user, user, host
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            benchmark, cycles, instructions, ipc, cpi, metrics, log_path, run_dir, simulator, github_user, run_target, user, host
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             build_id,
             commit_hash,
@@ -117,8 +167,39 @@ def insert_run(
             run_dir or "",
             simulator or "",
             github_user or "",
+            run_target or "",
             user or "",
             host or "",
         ),
     )
     conn.commit()
+    return cur.lastrowid
+
+
+def insert_run_embedding(
+    conn: sqlite3.Connection,
+    run_id: int,
+    content: str,
+    embedding: list[float],
+) -> bool:
+    """
+    Insert a run embedding into vec_runs. Requires sqlite-vec loaded.
+    Returns True on success, False if vec extension unavailable or failed.
+    """
+    if not load_vec_extension(conn):
+        return False
+    if len(embedding) != VEC_EMBEDDING_DIM:
+        return False
+    try:
+        import json
+
+        # vec0 accepts JSON array for float vectors
+        vec_json = json.dumps(embedding)
+        conn.execute(
+            "INSERT INTO vec_runs (run_id, embedding, content) VALUES (?, ?, ?)",
+            (run_id, vec_json, content),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        return False

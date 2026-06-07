@@ -1,0 +1,6 @@
+# Chipyard datacoll: base (required for vector tables)
+sqlite-vec>=0.1.6
+
+# Optional: for embedding computation when enable_vector_index=on
+# Uncomment to enable RAG/vector indexing:
+# sentence-transformers>=2.2.0

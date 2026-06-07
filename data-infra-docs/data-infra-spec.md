@@ -25,11 +25,27 @@ Example fields:
 - `log_dir`: string  
   Subdirectory under `artifact_dir` for run logs (default `"logs"`).
 
+- `enable_vector_index`: `"on"` or `"off"`  
+  When `"on"`, each run is embedded and indexed in a vector table (`vec_runs`) for RAG/semantic search. Requires `sqlite-vec` and `sentence-transformers`. Default `"off"`.
+
+- `embedding_model`: string  
+  Sentence-transformers model name for embeddings (default `"all-MiniLM-L6-v2"`). Must produce 384-dimensional vectors for the default schema.
+
 These can be overridden at runtime. For example, running `make ... DATACOLL=on` will temporarily turn data collection on for that run, regardless of `enable_data_collection`. If `DATACOLL=off`, it will turn it off. If unset, use the value in `config.json`. This provides the requested tri state override: default, on, off.
+
+## Dependencies
+
+- **sqlite-vec** (`pip install sqlite-vec`): Required for the `vec_runs` vector table when `enable_vector_index` is on. The Python interpreter must support `enable_load_extension` (some system Pythons do not).
+- **sentence-transformers** (`pip install sentence-transformers`): Required for embedding computation when `enable_vector_index` is on.
+- See `util/datacoll/requirements.txt` for pinned versions.
 
 ## Integration Points (Makefile Hooks)
 
-A shared fragment `sims/data-collection.mk` is included from `common.mk`. It defines a `log_data_post_run` macro that invokes `util/log_data.py` after each run. The hook is appended to `%.run`, `%.run.fast`, and `$(output_dir)/%.run` rules in `common.mk`. Make always calls the script; the script reads `DATACOLL` and config to decide whether to collect. Both Verilator and VCS inherit these rules. Thus, an example `make` command that a user can run in the terminal is:
+A shared fragment `sims/data-collection.mk` is included from `common.mk`. It defines a `log_data_post_run` macro that invokes `util/log_data.py` after each run. The hook is appended to `%.run`, `%.run.fast`, and `$(output_dir)/%.run` rules in `common.mk`. Make always calls the script; the script reads `DATACOLL` and config to decide whether to collect. Both Verilator and VCS inherit these rules.
+
+- **CHIPYARD_PYTHON**: Make variable (default `python3`) that selects which Python runs `log_data.py`. Override if your default `python3` lacks sqlite `load_extension` support (required for `vec_runs`): e.g. `make ... CHIPYARD_PYTHON=/path/to/conda/bin/python run-binary`, or `export CHIPYARD_PYTHON=...` in your environment. This does not install anything; you must install `sqlite-vec` and `sentence-transformers` in the Python you point to.
+
+Thus, an example `make` command that a user can run in the terminal is:
 ```shell
 # Example: run a binary under Verilator and collect data for this run only
 make CONFIG=RocketConfig BINARY=../../tests/hello.riscv DATACOLL=on run-binary
@@ -120,6 +136,9 @@ Columns:
 - `github_user` (TEXT)  
   GitHub user or org extracted from `remote.origin.url` (e.g. `"ucb-bar"`, `"reed-nicolas"`)
 
+- `run_target` (TEXT)  
+  Make target that invoked the run (e.g. `"run-binary"`, `"run-binary-fast"`, `"run-asm-tests"`, `"run-bmark-tests"`)
+
 - `user`, `host` (TEXT)  
   Who ran it (Unix user, hostname)
 
@@ -147,6 +166,16 @@ Under the base `artifact_dir` (for example `/scratch/chipyard-data`), organize f
 
 All artifact paths saved in the DB should be absolute or relative under `artifact_dir`, not under the user’s private directory, so that data is centrally accessible.
 
+## Setup
+
+Initialize the database and directories:
+
+```shell
+python3 util/log_data.py --init-db
+```
+
+When `enable_vector_index` is `"on"`, this also creates the `vec_runs` table (if sqlite-vec is available).
+
 ## Logging Workflow
 
 ### Before run
@@ -172,6 +201,7 @@ The script:
 - Opens the SQLite DB and inserts a row into `runs`, filling in all columns.
 - If this is the first time this build or config was seen, it also inserts into `builds`.
 - If a matching `(commit_hash, config)` already exists in `builds`, it uses that id and does not duplicate.
+- When `enable_vector_index` is `"on"`, builds a text chunk, embeds it, and inserts into `vec_runs` (no-op if sqlite-vec or sentence-transformers unavailable).
 
 ### Build sharing
 
@@ -233,16 +263,26 @@ Records each run.
   All other counters and user metrics (cache misses, TMA categories, etc.)
 - `log_path` (TEXT)  
   Path to the copied run log file
-- `run_dir` (TEXT), `simulator` (TEXT), `github_user` (TEXT)
+- `run_dir` (TEXT), `simulator` (TEXT), `github_user` (TEXT), `run_target` (TEXT)
 - `user`, `host`, `timestamp` (as above)
 
 This schema assumes SQLite, but uses common types so it could be ported to Postgres later. For example, `metrics` can be TEXT in SQLite and JSONB in Postgres.
+
+### RAG / Vector table `vec_runs` (optional)
+
+When `enable_vector_index` is `"on"`, a `vec_runs` virtual table (via sqlite-vec) stores embeddings for semantic search. Columns: `run_id` (FK to `runs.id`), `embedding` (FLOAT[384]), `content` (TEXT). Users query via SQL; LLMs use semantic KNN.
+
+**Querying:** The `sqlite3` CLI cannot load the sqlite-vec extension, so `vec_runs` must be queried from Python using `datacoll.db.connection_with_vec(db_path)`. The regular tables (`runs`, `builds`) work with the `sqlite3` CLI.
+
+**Backfill:** For runs logged before `enable_vector_index` was enabled, run `python3 util/backfill_vec_runs.py` from the chipyard root to backfill `vec_runs`.
+
+**Ray Data:** Use `datacoll.db.connection_with_vec(db_path)` as the `connection_factory` when querying `vec_runs`.
 
 ## Future and Ray compatibility (TBD)
 
 ### Ray integration
 
-The schema is compatible with Ray Data’s SQL reading (which uses the Python DB API). In future, we may centralize the DB or export it to a Ray compatible store.
+The schema is compatible with Ray Data’s SQL reading (which uses the Python DB API). Use datacoll.db.connection_with_vec(db_path) as the connection_factory when querying vec_runs or other vector tables. In future, we may centralize the DB or export it to a Ray compatible store.
 
 ### Performance counters
 

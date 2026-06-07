@@ -73,6 +73,8 @@ def get_default_config(chipyard_root: Path) -> dict[str, Any]:
         "artifact_dir": artifact_dir,
         "build_dir": "builds",
         "log_dir": "logs",
+        "enable_vector_index": "off",
+        "embedding_model": "all-MiniLM-L6-v2",
     }
 
 

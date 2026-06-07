@@ -31,3 +31,6 @@ project/project/
 .vscode/
 tests/build/
 .chipyard/
+__pycache__/
+*.pyc
+Miniforge3-Linux-x86_64.sh

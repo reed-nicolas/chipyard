@@ -379,7 +379,7 @@ run-binaries: check-binaries $(addsuffix .run,$(wildcard $(BINARIES)))
 		$(PERMISSIVE_OFF) \
 		$* \
 		$(BINARY_ARGS) \
-		</dev/null 2> >(spike-dasm > $(call get_sim_out_name,$*).out) | tee $(call get_sim_out_name,$*).log) && $(call log_data_post_run,$(call get_out_name,$*),$(call get_sim_out_name,$*).log)
+		</dev/null 2> >(spike-dasm > $(call get_sim_out_name,$*).out) | tee $(call get_sim_out_name,$*).log) && $(call log_data_post_run,$(call get_out_name,$*),$(call get_sim_out_name,$*).log,run-binary)
 
 # run simulator as fast as possible (no insn disassembly)
 run-binary-fast: check-binary $(BINARY).run.fast
@@ -392,7 +392,7 @@ run-binaries-fast: check-binaries $(addsuffix .run.fast,$(wildcard $(BINARIES)))
 		$(PERMISSIVE_OFF) \
 		$* \
 		$(BINARY_ARGS) \
-		</dev/null | tee $(call get_sim_out_name,$*).log) && $(call log_data_post_run,$(call get_out_name,$*),$(call get_sim_out_name,$*).log)
+		</dev/null | tee $(call get_sim_out_name,$*).log) && $(call log_data_post_run,$(call get_out_name,$*),$(call get_sim_out_name,$*).log,run-binary-fast)
 
 # run simulator with as much debug info as possible
 run-binary-debug: check-binary $(BINARY).run.debug
@@ -452,7 +452,7 @@ $(output_dir)/%: $(RISCV)/riscv64-unknown-elf/share/riscv-tests/isa/% | $(output
 endif
 
 $(output_dir)/%.run: $(output_dir)/% $(SIM_PREREQ)
-	(set -o pipefail && $(NUMA_PREFIX) $(sim) $(PERMISSIVE_ON) $(call get_common_sim_flags,$<) $(PERMISSIVE_OFF)  $< </dev/null | tee $<.log) && $(call log_data_post_run,$*,$<.log) && touch $@
+	(set -o pipefail && $(NUMA_PREFIX) $(sim) $(PERMISSIVE_ON) $(call get_common_sim_flags,$<) $(PERMISSIVE_OFF)  $< </dev/null | tee $<.log) && $(call log_data_post_run,$*,$<.log,$(or $(firstword $(MAKECMDGOALS)),run-asm-tests)) && touch $@
 
 $(output_dir)/%.out: $(output_dir)/% $(SIM_PREREQ)
 	(set -o pipefail && $(NUMA_PREFIX) $(sim) $(PERMISSIVE_ON) $(call get_common_sim_flags,$<) $(PERMISSIVE_OFF) $< </dev/null 2> >(spike-dasm > $@) | tee $<.log)

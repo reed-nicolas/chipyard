@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS runs (
     run_dir TEXT,
     simulator TEXT,
     github_user TEXT,
+    run_target TEXT,
     user TEXT,
     host TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
