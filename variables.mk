@@ -47,6 +47,7 @@ HELP_SIMULATION_VARIABLES = \
 "   BINARIES               = list of riscv elf binary that the simulator will run when using the run-binaries* targets" \
 "   BINARIES_DIR           = directory of riscv elf binaries that the simulator will run when using the run-binaries* targets" \
 "   BINARY_ARGS            = arguments to pass to each binary in run-binary targets (primarily meant for pk arguments)" \
+"   USE_DRAMSIM2           = set to '1' to run with legacy DRAMSim2 (default uses DRAMSim3)" \
 "   LOADMEM                = riscv elf binary that should be loaded directly into simulated DRAM. LOADMEM=1 will load the BINARY elf" \
 "   LOADARCH               = path to a architectural checkpoint directory that should end in .loadarch/, for restoring from a checkpoint" \
 "   VERBOSE_FLAGS          = flags used when doing verbose simulation [$(VERBOSE_FLAGS)]" \
@@ -181,6 +182,8 @@ TESTCHIP_DIR         = $(base_dir)/generators/testchipip
 TESTCHIP_RSRCS_DIR   = $(TESTCHIP_DIR)/src/main/resources
 CHIPYARD_FIRRTL_DIR  = $(base_dir)/tools/firrtl
 CHIPYARD_RSRCS_DIR   = $(base_dir)/generators/chipyard/src/main/resources
+dramsim2_dir         = $(base_dir)/tools/DRAMSim2
+dramsim3_dir         = $(base_dir)/tools/DRAMSim3
 
 #########################################################################################
 # names of various files needed to compile and run things
@@ -298,7 +301,13 @@ PERMISSIVE_OFF=+permissive-off
 BINARY ?=
 BINARIES ?=
 BINARY_ARGS ?=
-override SIM_FLAGS += +dramsim +dramsim_ini_dir=$(TESTCHIP_DIR)/src/main/resources/dramsim2_ini +max-cycles=$(TIMEOUT_CYCLES)
+export USE_DRAMSIM2 ?= 0
+ifeq ($(USE_DRAMSIM2),1)
+override SIM_FLAGS += +dramsim2 +dramsim_ini_dir=$(TESTCHIP_DIR)/src/main/resources/dramsim2_ini
+else
+override SIM_FLAGS += +dramsim +dramsim_ini=$(dramsim3_dir)/configs/DDR4_8Gb_x8_3200.ini +dramsim_out=$(output_dir)
+endif
+override SIM_FLAGS += +max-cycles=$(TIMEOUT_CYCLES)
 VERBOSE_FLAGS ?= +verbose
 # get_out_name is a function, 1st argument is the binary
 get_out_name = $(subst $() $(),_,$(notdir $(basename $(1))))

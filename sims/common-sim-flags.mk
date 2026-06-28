@@ -6,12 +6,15 @@ LRISCV=-lriscv
 
 export USE_CHISEL6=1
 
+DRAMSIM_INCLUDE_FLAGS = -I$(dramsim2_dir) -I$(dramsim3_dir)/src
+DRAMSIM_LINK_FLAGS = -L$(dramsim2_dir) -ldramsim -L$(dramsim3_dir) -ldramsim3 -Wl,-rpath,$(dramsim3_dir)
+
 SIM_CXXFLAGS = \
 	$(CXXFLAGS) \
 	$(SIM_OPT_CXXFLAGS) \
 	-std=c++17 \
 	-I$(RISCV)/include \
-	-I$(dramsim_dir) \
+	$(DRAMSIM_INCLUDE_FLAGS) \
 	-I$(GEN_COLLATERAL_DIR) \
 	$(EXTRA_SIM_CXXFLAGS)
 
@@ -20,10 +23,9 @@ SIM_LDFLAGS = \
 	-L$(RISCV)/lib \
 	-Wl,-rpath,$(RISCV)/lib \
 	-L$(sim_dir) \
-	-L$(dramsim_dir) \
 	$(LRISCV) \
 	-lfesvr \
-	-ldramsim \
+	$(DRAMSIM_LINK_FLAGS) \
 	$(EXTRA_SIM_LDFLAGS)
 
 CLOCK_PERIOD ?= 1.0

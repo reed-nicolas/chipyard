@@ -118,6 +118,14 @@ make clean
 make libdramsim.so
 cp libdramsim.so $RISCV/lib/
 
+echo '==>  Installing DRAMSim3 Shared Library'
+cd $RDIR
+git submodule update --init tools/DRAMSim3
+cd tools/DRAMSim3
+make clean
+make libdramsim3.so
+cp libdramsim3.so $RISCV/lib/
+
 echo '==>  Installing uart_tsi bringup utility'
 cd $RDIR
 git submodule update --init generators/testchipip
